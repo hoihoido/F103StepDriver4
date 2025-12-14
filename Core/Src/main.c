@@ -33,6 +33,28 @@
 /* USER CODE BEGIN PD */
 #define TICKTIME ((RTC->CNTH)<<16 | RTC->CNTL)
 #define CHATTER 100
+
+// 制御シンボル
+#define UP true
+#define DOWN false
+
+// 制御するドライバ数
+#define CHCOUNT 4
+
+// 動作範囲
+#define LENGTH 8.2  // アクチュエータのストローク(mm)
+#define MAXPT  2600 // 最大パルス数
+#define INITCT 2700 // 初期化時に下げる数(強制脱調)
+
+// 時間定数
+#define STBYTIME 1000 // 不動時間がこれ以上あるとスタンバイ(mS)
+#define STBYDLY  100  // スタンバイ復帰時の待ち時間(uS)
+
+// 等加速度運動パラメータ
+#define INITVEL  7.5 // 初期速度(mm/S)
+#define MAXVEL  50.0 // 最大速度(mm/S)
+#define ACCEL  750.0 // 加速度(mm/S2)
+#define MARGIN 10    // 減速余裕(pulse)
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -56,6 +78,29 @@ TIM_HandleTypeDef* timarray[] = {
 	&htim3,
 	&htim4
 };
+
+typedef struct PORTPIN {
+	GPIO_TypeDef *port;
+    uint16_t bit;
+} portpin;
+
+typedef struct CH {
+  portpin dir;
+  portpin clk;
+  portpin stby;
+} ch;
+
+ch ports[] = {
+  {{ CH0DIR_GPIO_Port, CH0DIR_Pin },{ CH0CLK_GPIO_Port, CH0CLK_Pin },{ CH0EN_GPIO_Port, CH0EN_Pin }},
+  {{ CH1DIR_GPIO_Port, CH1DIR_Pin },{ CH1CLK_GPIO_Port, CH1CLK_Pin },{ CH1EN_GPIO_Port, CH1EN_Pin }},
+  {{ CH2DIR_GPIO_Port, CH2DIR_Pin },{ CH2CLK_GPIO_Port, CH2CLK_Pin },{ CH2EN_GPIO_Port, CH2EN_Pin }},
+  {{ CH3DIR_GPIO_Port, CH3DIR_Pin },{ CH3CLK_GPIO_Port, CH3CLK_Pin },{ CH3EN_GPIO_Port, CH3EN_Pin }}
+};
+
+float lperstep;
+long  initvel;
+long  maxvel;
+long  accel; // 加速度 steps/S2
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -115,16 +160,33 @@ int main(void)
   MX_TIM4_Init();
   /* USER CODE BEGIN 2 */
 
+  // その他変数の準備
+  lperstep = LENGTH / MAXPT; // length/step(mm)
+  initvel = INITVEL / lperstep; // step/S
+  maxvel = MAXVEL / lperstep; // step/S
+  accel = ACCEL / lperstep; // step/S2
+
+  // 初期化
+  for(int8_t i=0; i<CHCOUNT; i++) {
+      dest[i]=0;          // そして目標値を0。
+      kinematics(i);      // 動作開始。
+      while (dest[i] != currentpt[i]) {
+          if (-1 == timaf) { timeup(); }
+      }
+  }
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  HAL_TIM_Base_Start_IT(&htim1);
+  //HAL_TIM_Base_Start_IT(&htim1);
+
   while (1)
   {
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+	  /*
 	  if ( GPIO_PIN_RESET ==  HAL_GPIO_ReadPin(BUTTON_GPIO_Port, BUTTON_Pin ) ) {
 		  if ( 0 == bttimer) { bttimer = TICKTIME; }
 		  if ( CHATTER < (TICKTIME - bttimer) & !bton) {
@@ -135,6 +197,8 @@ int main(void)
 		  bttimer = 0;
 		  bton=false;
 	  }
+	  */
+
 
 
 
@@ -429,26 +493,26 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, CH0DIR_Pin|CH0CLK_Pin|CH0ENABLE_Pin|CH1DIR_Pin
-                          |CH1CLK_Pin|CH1ENABLE_Pin|CH2DIR_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOA, CH0DIR_Pin|CH0CLK_Pin|CH0EN_Pin|CH1DIR_Pin
+                          |CH1CLK_Pin|CH1EN_Pin|CH2DIR_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, CH2CLK_Pin|CH2ENABLE_Pin|CH3DIR_Pin|CH3CLK_Pin
-                          |CH3ENABLE_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOB, CH2CLK_Pin|CH2EN_Pin|CH3DIR_Pin|CH3CLK_Pin
+                          |CH3EN_Pin, GPIO_PIN_RESET);
 
-  /*Configure GPIO pins : CH0DIR_Pin CH0CLK_Pin CH0ENABLE_Pin CH1DIR_Pin
-                           CH1CLK_Pin CH1ENABLE_Pin CH2DIR_Pin */
-  GPIO_InitStruct.Pin = CH0DIR_Pin|CH0CLK_Pin|CH0ENABLE_Pin|CH1DIR_Pin
-                          |CH1CLK_Pin|CH1ENABLE_Pin|CH2DIR_Pin;
+  /*Configure GPIO pins : CH0DIR_Pin CH0CLK_Pin CH0EN_Pin CH1DIR_Pin
+                           CH1CLK_Pin CH1EN_Pin CH2DIR_Pin */
+  GPIO_InitStruct.Pin = CH0DIR_Pin|CH0CLK_Pin|CH0EN_Pin|CH1DIR_Pin
+                          |CH1CLK_Pin|CH1EN_Pin|CH2DIR_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : CH2CLK_Pin CH2ENABLE_Pin CH3DIR_Pin CH3CLK_Pin
-                           CH3ENABLE_Pin */
-  GPIO_InitStruct.Pin = CH2CLK_Pin|CH2ENABLE_Pin|CH3DIR_Pin|CH3CLK_Pin
-                          |CH3ENABLE_Pin;
+  /*Configure GPIO pins : CH2CLK_Pin CH2EN_Pin CH3DIR_Pin CH3CLK_Pin
+                           CH3EN_Pin */
+  GPIO_InitStruct.Pin = CH2CLK_Pin|CH2EN_Pin|CH3DIR_Pin|CH3CLK_Pin
+                          |CH3EN_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
@@ -469,8 +533,8 @@ static void MX_GPIO_Init(void)
 // ### タイマー割込み処理 ###
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 	if ( htim->Instance == htim1.Instance ) {
-		HAL_TIM_Base_Stop_IT(&htim1);
 		HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_10);
+		HAL_TIM_Base_Stop_IT(&htim1);
 		timarray[tch]->State = HAL_TIM_STATE_READY;
 		HAL_TIM_Base_Start_IT(timarray[tch]);
 	} else	if ( htim->Instance == htim2.Instance ) {
