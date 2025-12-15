@@ -31,12 +31,13 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define TICKTIME ((RTC->CNTH)<<16 | RTC->CNTL)
 #define CHATTER 100
 
 // 制御シンボル
 #define UP true
 #define DOWN false
+#define HIGH 1
+#define LOW 0
 
 // 制御するドライバ数
 #define CHCOUNT 4
@@ -55,6 +56,10 @@
 #define MAXVEL  50.0 // 最大速度(mm/S)
 #define ACCEL  750.0 // 加速度(mm/S2)
 #define MARGIN 10    // 減速余裕(pulse)
+
+// 簡易数学関数
+#define abs(x) (x<0 ? x*-1 : x)
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -97,10 +102,17 @@ ch ports[] = {
   {{ CH3DIR_GPIO_Port, CH3DIR_Pin },{ CH3CLK_GPIO_Port, CH3CLK_Pin },{ CH3EN_GPIO_Port, CH3EN_Pin }}
 };
 
+int8_t chstat[CHCOUNT] = {0, 0, 0, 0};
+
 float lperstep;
 long  initvel;
 long  maxvel;
 long  accel; // 加速度 steps/S2
+uint32_t	period[CHCOUNT]={0,0,0,0};
+int32_t		dest[CHCOUNT] = {2600,2600,2600,2600};
+int32_t		currentpt[CHCOUNT] = {MAXPT,MAXPT,MAXPT,MAXPT}; //初期化の為暫定的に上限にする。
+int32_t		velocity[CHCOUNT]={};
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -117,7 +129,98 @@ static void MX_TIM4_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+void digitalWrite(portpin pp , int level) {
+        HAL_GPIO_WritePin(pp.port, pp.bit, level);
+}
 
+// RTC_ReadTimeCounter()からパクった。(RTC_ReadTimeCounter()は外に公開するヘッダに載ってないので）。
+static uint32_t ticktime()
+{
+  uint16_t high1 = 0U, high2 = 0U, low = 0U;
+  uint32_t timecounter = 0U;
+
+  high1 = READ_REG(hrtc.Instance->CNTH & RTC_CNTH_RTC_CNT);
+  low   = READ_REG(hrtc.Instance->CNTL & RTC_CNTL_RTC_CNT);
+  high2 = READ_REG(hrtc.Instance->CNTH & RTC_CNTH_RTC_CNT);
+  if (high1 != high2)
+    timecounter = (((uint32_t) high2 << 16U) | READ_REG(hrtc.Instance->CNTL & RTC_CNTL_RTC_CNT));
+  else
+    timecounter = (((uint32_t) high1 << 16U) | low);
+  return timecounter;
+}
+
+void reservation( uint32_t t, int8_t i, portpin clkpin, bool hl ) {
+	__HAL_TIM_SET_COUNTER(timarray[tch], t);
+	HAL_TIM_Base_Start_IT(timarray[tch]);
+	chstat[i]=1;
+}
+
+void onestep(int8_t i, ch* channel, bool ud, uint32_t steptime) {
+  // DIRとCLKを設定する。
+  digitalWrite(channel->dir, ud ? HIGH : LOW);
+  digitalWrite(channel->clk, HIGH);
+
+  // CLK立下りとL期間終了イベントを予約する。
+  reservation(steptime, i, channel->clk, LOW );
+}
+
+// 等加速度運動による現在速度と周期を計算しモーターを１ステップ進める。。
+void kinematics(int8_t i) {
+  int ap;
+  int ud;
+
+  // velocity[]から次回迄のperiod[]を算出。
+  period[i] = abs(1e6 / velocity[i]); // 周期[uS]
+
+  // currentpt[]とdest[]を比べてUP/DOWN/=を判断する。それに応じud[]を設定する。
+  //      ud[] -1:DOWN 0:STOP +1:UP
+  // ud[]に応じてDIRを設定。
+  if (currentpt[i] < dest[i]) {
+    ud = 1;
+  } else if (dest[i] < currentpt[i]) {
+    ud = -1;
+  } else {
+    ud = 0;
+  }
+
+  // === 次回のvelocity[]を算出。===
+  // 減速点apを計算
+  ap = dest[i] - (velocity[i]
+		  + (0 <= velocity[i] ? initvel : -1 * initvel)) / 2 * (abs(velocity[i]) - initvel) / accel
+    - ud*MARGIN;
+  // 場合分けして次回の速度velociy[]を計算
+  if (0 < ud) { // 上昇
+    if (currentpt[i] < ap) {
+      velocity[i] = velocity[i] + accel * period[i] / 1e6; // 上向きに対し加速
+      if (maxvel < velocity[i]) velocity[i] = maxvel; // 上限に揃える
+      if (-1 * initvel < velocity[i] && velocity[i] < initvel) velocity[i] = initvel; // ±initvalの間はすっ飛ばす。
+    } else {
+      velocity[i] = velocity[i] - accel * period[i] / 1e6; // 上向きに対し減速
+      if (velocity[i] < initvel) velocity[i] = initvel; // 下限に揃える
+    }
+  } else if (ud < 0) { // 下降
+    if (ap < currentpt[i]) {
+      velocity[i] = velocity[i] - accel * period[i] / 1e6; // 上向きに対し減速(下に加速)
+      if (velocity[i] < -1 * maxvel) velocity[i] = -1 * maxvel;
+      if (-1 * initvel < velocity[i] && velocity[i] < initvel) velocity[i] = -1 * initvel; // ±initvalの間はすっ飛ばす。
+    } else {
+      velocity[i] = velocity[i] + accel * period[i] / 1e6; // 上向きに対し加速(下に減速)
+      if (-1 * initvel < velocity[i]) velocity[i] = -1 * initvel;
+    }
+  }
+
+  // 移動/現在地更新
+  if (currentpt[i] != dest[i]) {
+    // 指示に従って移動
+    if (0 <= velocity[i]) {
+      currentpt[i]++;
+      onestep(i, &(ports[i]), UP, period[i] / 2);
+    } else {
+      currentpt[i]--;
+      onestep(i, &(ports[i]), DOWN, period[i] / 2);
+    }
+  }
+}
 /* USER CODE END 0 */
 
 /**
@@ -128,10 +231,7 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
-	uint32_t tick;
-	uint32_t prevtick=0;
-	bool bton=false;
-	uint32_t bttimer=0;
+	bool step1f=false;
 
   /* USER CODE END 1 */
 
@@ -170,9 +270,6 @@ int main(void)
   for(int8_t i=0; i<CHCOUNT; i++) {
       dest[i]=0;          // そして目標値を0。
       kinematics(i);      // 動作開始。
-      while (dest[i] != currentpt[i]) {
-          if (-1 == timaf) { timeup(); }
-      }
   }
 
   /* USER CODE END 2 */
@@ -186,22 +283,20 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-	  /*
-	  if ( GPIO_PIN_RESET ==  HAL_GPIO_ReadPin(BUTTON_GPIO_Port, BUTTON_Pin ) ) {
-		  if ( 0 == bttimer) { bttimer = TICKTIME; }
-		  if ( CHATTER < (TICKTIME - bttimer) & !bton) {
-			  if ( 3 < ++ tch) tch=0;
-			  bton=true;
+	  for (int i=0; i<CHCOUNT; i++ ) {
+		  if (chstat[i] == 2) {
+			  chstat[i]=0;
+			  kinematics(i);
 		  }
-	  } else {
-		  bttimer = 0;
-		  bton=false;
 	  }
-	  */
 
-
-
-
+	  if ( 1000 < ticktime(&hrtc) && ! step1f ) {
+		  step1f=true;
+		  for(int8_t i=0; i<CHCOUNT; i++) {
+			  dest[i]=2500;
+			  kinematics(i);
+		  }
+	  }
   }
   /* USER CODE END 3 */
 }
@@ -533,31 +628,41 @@ static void MX_GPIO_Init(void)
 // ### タイマー割込み処理 ###
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 	if ( htim->Instance == htim1.Instance ) {
-		HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_10);
 		HAL_TIM_Base_Stop_IT(&htim1);
-		timarray[tch]->State = HAL_TIM_STATE_READY;
-		HAL_TIM_Base_Start_IT(timarray[tch]);
+		if ( chstat[0]==1 ) {
+			chstat[0]=0;
+			digitalWrite(ports->clk, HIGH);
+			HAL_TIM_Base_Start_IT(timarray[0]);
+		} else {
+			chstat[0]=2;
+		}
 	} else	if ( htim->Instance == htim2.Instance ) {
-		HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_10);
 		HAL_TIM_Base_Stop_IT(&htim2);
-		timarray[tch]->State = HAL_TIM_STATE_READY;
-		HAL_TIM_Base_Start_IT(timarray[tch]);
+		if ( chstat[1]==1 ) {
+			chstat[1]=0;
+			digitalWrite(ports->clk, HIGH);
+			HAL_TIM_Base_Start_IT(timarray[1]);
+		} else {
+			chstat[1]=2;
+		}
 	} else	if ( htim->Instance == htim3.Instance ) {
-		HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_10);
 		HAL_TIM_Base_Stop_IT(&htim3);
-		timarray[tch]->State = HAL_TIM_STATE_READY;
-		HAL_TIM_Base_Start_IT(timarray[tch]);
-		//__HAL_TIM_SET_COUNTER(&htim3, 333);
-		//HAL_TIM_Base_Stop_IT(&htim3);
-		//__HAL_TIM_SET_COUNTER(&htim3, htim3.Init.Period);
-		//__HAL_TIM_CLEAR_FLAG(&htim3, TIM_FLAG_UPDATE);
-		//htim3.State = HAL_TIM_STATE_READY;
-		//HAL_TIM_Base_Start_IT(&htim3);
+		if ( chstat[2]==1 ) {
+			chstat[2]=0;
+			digitalWrite(ports->clk, HIGH);
+			HAL_TIM_Base_Start_IT(timarray[2]);
+		} else {
+			chstat[2]=2;
+		}
 	} else	if ( htim->Instance == htim4.Instance ) {
-		HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_10);
 		HAL_TIM_Base_Stop_IT(&htim4);
-		timarray[tch]->State = HAL_TIM_STATE_READY;
-		HAL_TIM_Base_Start_IT(timarray[tch]);
+		if ( chstat[3]==1 ) {
+			chstat[3]=0;
+			digitalWrite(ports->clk, HIGH);
+			HAL_TIM_Base_Start_IT(timarray[3]);
+		} else {
+			chstat[3]=2;
+		}
 	}
 
 }
