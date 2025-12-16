@@ -92,7 +92,7 @@ typedef struct PORTPIN {
 typedef struct CH {
   portpin dir;
   portpin clk;
-  portpin stby;
+  portpin enbl;
 } ch;
 
 ch ports[] = {
@@ -273,6 +273,7 @@ int main(void)
   // 初期化
   for(int8_t i=0; i<CHCOUNT; i++) {
 	  printf("Hello World!!\r\n");
+	  digitalWrite(ports[i].enbl, HIGH);
 	  velocity[i] = initvel;
       dest[i]=0;          // そして目標値を0。
       kinematics(i);      // 動作開始。
