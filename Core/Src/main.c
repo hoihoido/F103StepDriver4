@@ -21,6 +21,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include <stdio.h>		// for DEBUG
 #include "stdbool.h"
 /* USER CODE END Includes */
 
@@ -76,7 +77,6 @@ TIM_HandleTypeDef htim3;
 TIM_HandleTypeDef htim4;
 
 /* USER CODE BEGIN PV */
-uint32_t tch=0;
 TIM_HandleTypeDef* timarray[] = {
 	&htim1,
 	&htim2,
@@ -150,9 +150,9 @@ static uint32_t ticktime()
 }
 
 void reservation( uint32_t t, int8_t i, portpin clkpin, bool hl ) {
-	__HAL_TIM_SET_COUNTER(timarray[tch], t);
-	HAL_TIM_Base_Start_IT(timarray[tch]);
 	chstat[i]=1;
+	__HAL_TIM_SET_COUNTER(timarray[i], t);
+	HAL_TIM_Base_Start_IT(timarray[i]);
 }
 
 void onestep(int8_t i, ch* channel, bool ud, uint32_t steptime) {
@@ -232,6 +232,8 @@ int main(void)
 
   /* USER CODE BEGIN 1 */
 	bool step1f=false;
+	bool step2f=false;
+	uint32_t tickstart;
 
   /* USER CODE END 1 */
 
@@ -260,6 +262,8 @@ int main(void)
   MX_TIM4_Init();
   /* USER CODE BEGIN 2 */
 
+  tickstart = ticktime(&hrtc);
+
   // その他変数の準備
   lperstep = LENGTH / MAXPT; // length/step(mm)
   initvel = INITVEL / lperstep; // step/S
@@ -268,10 +272,11 @@ int main(void)
 
   // 初期化
   for(int8_t i=0; i<CHCOUNT; i++) {
+	  printf("Hello World!!\r\n");
+	  velocity[i] = initvel;
       dest[i]=0;          // そして目標値を0。
       kinematics(i);      // 動作開始。
   }
-
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -284,19 +289,31 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
 	  for (int i=0; i<CHCOUNT; i++ ) {
-		  if (chstat[i] == 2) {
+		  if (chstat[i] == 3) {
 			  chstat[i]=0;
 			  kinematics(i);
 		  }
 	  }
-
-	  if ( 1000 < ticktime(&hrtc) && ! step1f ) {
+/*
+	  if ( 2000 < (ticktime(&hrtc)-tickstart) && ! step1f ) {
 		  step1f=true;
+		  for (int i=0; i<CHCOUNT; i++ ) {
+			  dest[i]=0;
+			  kinematics(i);
+		  }
+	  }
+	  	  */
+	  printf("Start : %ld\n", tickstart);
+	  printf("4S wait : %ld\n", ticktime(&hrtc));
+	  if ( 4000 < (ticktime(&hrtc)-tickstart) && ! step2f ) {
+		  step2f=true;
 		  for(int8_t i=0; i<CHCOUNT; i++) {
 			  dest[i]=2500;
 			  kinematics(i);
 		  }
 	  }
+
+
   }
   /* USER CODE END 3 */
 }
@@ -397,7 +414,7 @@ static void MX_TIM1_Init(void)
 
   /* USER CODE END TIM1_Init 1 */
   htim1.Instance = TIM1;
-  htim1.Init.Prescaler = 64000;
+  htim1.Init.Prescaler = 64;
   htim1.Init.CounterMode = TIM_COUNTERMODE_DOWN;
   htim1.Init.Period = 200;
   htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
@@ -447,7 +464,7 @@ static void MX_TIM2_Init(void)
 
   /* USER CODE END TIM2_Init 1 */
   htim2.Instance = TIM2;
-  htim2.Init.Prescaler = 64000;
+  htim2.Init.Prescaler = 64;
   htim2.Init.CounterMode = TIM_COUNTERMODE_DOWN;
   htim2.Init.Period = 250;
   htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
@@ -496,7 +513,7 @@ static void MX_TIM3_Init(void)
 
   /* USER CODE END TIM3_Init 1 */
   htim3.Instance = TIM3;
-  htim3.Init.Prescaler = 64000;
+  htim3.Init.Prescaler = 64;
   htim3.Init.CounterMode = TIM_COUNTERMODE_DOWN;
   htim3.Init.Period = 333;
   htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
@@ -545,7 +562,7 @@ static void MX_TIM4_Init(void)
 
   /* USER CODE END TIM4_Init 1 */
   htim4.Instance = TIM4;
-  htim4.Init.Prescaler = 64000;
+  htim4.Init.Prescaler = 64;
   htim4.Init.CounterMode = TIM_COUNTERMODE_DOWN;
   htim4.Init.Period = 500;
   htim4.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
@@ -630,42 +647,54 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 	if ( htim->Instance == htim1.Instance ) {
 		HAL_TIM_Base_Stop_IT(&htim1);
 		if ( chstat[0]==1 ) {
-			chstat[0]=0;
-			digitalWrite(ports->clk, HIGH);
+			chstat[0]=2;
+			digitalWrite(ports[0].clk, LOW);
 			HAL_TIM_Base_Start_IT(timarray[0]);
 		} else {
-			chstat[0]=2;
+			chstat[0]=3;
 		}
 	} else	if ( htim->Instance == htim2.Instance ) {
 		HAL_TIM_Base_Stop_IT(&htim2);
 		if ( chstat[1]==1 ) {
-			chstat[1]=0;
-			digitalWrite(ports->clk, HIGH);
+			chstat[1]=2;
+			digitalWrite(ports[1].clk, LOW);
 			HAL_TIM_Base_Start_IT(timarray[1]);
 		} else {
-			chstat[1]=2;
+			chstat[1]=3;
 		}
 	} else	if ( htim->Instance == htim3.Instance ) {
 		HAL_TIM_Base_Stop_IT(&htim3);
 		if ( chstat[2]==1 ) {
-			chstat[2]=0;
-			digitalWrite(ports->clk, HIGH);
+			chstat[2]=2;
+			digitalWrite(ports[2].clk, LOW);
 			HAL_TIM_Base_Start_IT(timarray[2]);
 		} else {
-			chstat[2]=2;
+			chstat[2]=3;
 		}
 	} else	if ( htim->Instance == htim4.Instance ) {
 		HAL_TIM_Base_Stop_IT(&htim4);
 		if ( chstat[3]==1 ) {
-			chstat[3]=0;
-			digitalWrite(ports->clk, HIGH);
+			chstat[3]=2;
+			digitalWrite(ports[3].clk, LOW);
 			HAL_TIM_Base_Start_IT(timarray[3]);
 		} else {
-			chstat[3]=2;
+			chstat[3]=3;
 		}
 	}
 
 }
+
+// for DEBUG (printf...)
+int _write(int file, char *ptr, int len)
+{
+  int DataIdx;
+  for(DataIdx=0; DataIdx<len; DataIdx++)
+  {
+    ITM_SendChar(*ptr++);
+  }
+  return len;
+}
+
 /* USER CODE END 4 */
 
 /**
