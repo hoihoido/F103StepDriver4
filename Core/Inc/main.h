@@ -83,6 +83,8 @@ void Error_Handler(void);
 #define CH3EN_GPIO_Port GPIOB
 #define BUTTON_Pin GPIO_PIN_10
 #define BUTTON_GPIO_Port GPIOA
+#define MARKER_Pin GPIO_PIN_11
+#define MARKER_GPIO_Port GPIOA
 
 /* USER CODE BEGIN Private defines */
 

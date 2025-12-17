@@ -55,8 +55,7 @@
 // 等加速度運動パラメータ
 #define INITVEL  7.5 // 初期速度(mm/S)
 #define MAXVEL  50.0 // 最大速度(mm/S)
-#define ACCEL  750.0 // 加速度(mm/S2)
-//#define ACCEL  100.0 // for DEBUG.
+#define ACCEL  500.0 // 加速度(mm/S2)
 #define MARGIN 10    // 減速余裕(pulse)
 
 // 絶対値マクロ
@@ -102,6 +101,8 @@ ch ports[] = {
   {{ CH2DIR_GPIO_Port, CH2DIR_Pin },{ CH2CLK_GPIO_Port, CH2CLK_Pin },{ CH2EN_GPIO_Port, CH2EN_Pin }},
   {{ CH3DIR_GPIO_Port, CH3DIR_Pin },{ CH3CLK_GPIO_Port, CH3CLK_Pin },{ CH3EN_GPIO_Port, CH3EN_Pin }}
 };
+
+portpin marker={MARKER_GPIO_Port, MARKER_Pin};
 
 int8_t chstat[CHCOUNT] = {0, 0, 0, 0};
 
@@ -154,6 +155,7 @@ void reservation( uint32_t t, int8_t i, portpin clkpin, bool hl ) {
 	chstat[i]=1;
 	__HAL_TIM_SET_COUNTER(timarray[i], t);
 	HAL_TIM_Base_Start_IT(timarray[i]);
+	if (0==i) digitalWrite(marker, HIGH); // for DEBUG
 }
 
 void onestep(int8_t i, ch* channel, bool ud, uint32_t steptime) {
@@ -237,6 +239,8 @@ int main(void)
 	bool step1f=false;
 	bool step2f=false;
 	uint32_t tickstart;
+	uint32_t btstart=0;
+	int32_t d;
 
   /* USER CODE END 1 */
 
@@ -297,15 +301,23 @@ int main(void)
 			  kinematics(i);
 		  }
 	  }
-/*
-	  if ( 2000 < (ticktime(&hrtc)-tickstart) && ! step1f ) {
-		  step1f=true;
-		  for (int i=0; i<CHCOUNT; i++ ) {
-			  dest[i]=0;
-			  kinematics(i);
+
+	  // ボタンを押す度に0と2500を行き来する。
+	  if ( GPIO_PIN_RESET ==  HAL_GPIO_ReadPin(BUTTON_GPIO_Port, BUTTON_Pin ) ) {
+		  if ( 0 == btstart ) btstart = ticktime(&hrtc);
+		  if ( 20 < (ticktime(&hrtc) - btstart) & !step1f ) {
+			  for(int8_t i=0; i<CHCOUNT; i++) {
+				  dest[i] = (0==dest[i])? 2500:0;
+				  kinematics(i);
+			  }
+			  step1f=true;
 		  }
+	  } else {
+		  btstart=0;
+		  step1f=false;
 	  }
-	  	  */
+
+	  /*
 	  //printf("Start : %ld\n", tickstart);
 	  //printf("4S wait : %ld\n", ticktime(&hrtc));
 	  if ( 3000 < (ticktime(&hrtc)-tickstart) && ! step1f ) {
@@ -322,7 +334,7 @@ int main(void)
 			  kinematics(i);
 		  }
 	  }
-
+	*/
 
   }
   /* USER CODE END 3 */
@@ -616,16 +628,16 @@ static void MX_GPIO_Init(void)
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOA, CH0DIR_Pin|CH0CLK_Pin|CH0EN_Pin|CH1DIR_Pin
-                          |CH1CLK_Pin|CH1EN_Pin|CH2DIR_Pin, GPIO_PIN_RESET);
+                          |CH1CLK_Pin|CH1EN_Pin|CH2DIR_Pin|MARKER_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOB, CH2CLK_Pin|CH2EN_Pin|CH3DIR_Pin|CH3CLK_Pin
                           |CH3EN_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pins : CH0DIR_Pin CH0CLK_Pin CH0EN_Pin CH1DIR_Pin
-                           CH1CLK_Pin CH1EN_Pin CH2DIR_Pin */
+                           CH1CLK_Pin CH1EN_Pin CH2DIR_Pin MARKER_Pin */
   GPIO_InitStruct.Pin = CH0DIR_Pin|CH0CLK_Pin|CH0EN_Pin|CH1DIR_Pin
-                          |CH1CLK_Pin|CH1EN_Pin|CH2DIR_Pin;
+                          |CH1CLK_Pin|CH1EN_Pin|CH2DIR_Pin|MARKER_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
@@ -657,12 +669,14 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 	// どのCH(どのタイマー)の割込みかループで探す。
 	for ( int i=0; i<CHCOUNT; i++) {
 		if ( htim->Instance == timarray[i]->Instance) {
+			if (0==i) digitalWrite(marker, LOW); // for DEBUG
 			HAL_TIM_Base_Stop_IT(timarray[i]);
 			if ( chstat[i]==1 ) { // H期間終了ならここ。CLKをLに下げて同じ時間でタイマー起動。
 				chstat[i]=2;
 				digitalWrite(ports[i].clk, LOW);
 				__HAL_TIM_SET_COUNTER(timarray[i], period[i]/2);
 				HAL_TIM_Base_Start_IT(timarray[i]);
+				if (0==i) digitalWrite(marker, HIGH); // for DEBUG
 			} else {			// L期間終了ならここ
 				chstat[i]=3;
 			}
