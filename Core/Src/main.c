@@ -56,9 +56,10 @@
 #define INITVEL  7.5 // 初期速度(mm/S)
 #define MAXVEL  50.0 // 最大速度(mm/S)
 #define ACCEL  750.0 // 加速度(mm/S2)
+//#define ACCEL  100.0 // for DEBUG.
 #define MARGIN 10    // 減速余裕(pulse)
 
-// 簡易数学関数
+// 絶対値マクロ
 #define abs(x) (x<0 ? x*-1 : x)
 
 /* USER CODE END PD */
@@ -156,6 +157,8 @@ void reservation( uint32_t t, int8_t i, portpin clkpin, bool hl ) {
 }
 
 void onestep(int8_t i, ch* channel, bool ud, uint32_t steptime) {
+	// DEBUG
+	if ( i==0 ) printf("%d:%ld\n",ud,steptime);
   // DIRとCLKを設定する。
   digitalWrite(channel->dir, ud ? HIGH : LOW);
   digitalWrite(channel->clk, HIGH);
@@ -272,7 +275,6 @@ int main(void)
 
   // 初期化
   for(int8_t i=0; i<CHCOUNT; i++) {
-	  printf("Hello World!!\r\n");
 	  digitalWrite(ports[i].enbl, HIGH);
 	  velocity[i] = initvel;
       dest[i]=0;          // そして目標値を0。
@@ -304,12 +306,19 @@ int main(void)
 		  }
 	  }
 	  	  */
-	  printf("Start : %ld\n", tickstart);
-	  printf("4S wait : %ld\n", ticktime(&hrtc));
-	  if ( 4000 < (ticktime(&hrtc)-tickstart) && ! step2f ) {
-		  step2f=true;
+	  //printf("Start : %ld\n", tickstart);
+	  //printf("4S wait : %ld\n", ticktime(&hrtc));
+	  if ( 3000 < (ticktime(&hrtc)-tickstart) && ! step1f ) {
+		  step1f=true;
 		  for(int8_t i=0; i<CHCOUNT; i++) {
 			  dest[i]=2500;
+			  kinematics(i);
+		  }
+	  }
+	  if ( 4500 < (ticktime(&hrtc)-tickstart) && ! step2f ) {
+		  step2f=true;
+		  for(int8_t i=0; i<CHCOUNT; i++) {
+			  dest[i]=0;
 			  kinematics(i);
 		  }
 	  }
@@ -645,44 +654,21 @@ static void MX_GPIO_Init(void)
 /* USER CODE BEGIN 4 */
 // ### タイマー割込み処理 ###
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
-	if ( htim->Instance == htim1.Instance ) {
-		HAL_TIM_Base_Stop_IT(&htim1);
-		if ( chstat[0]==1 ) {
-			chstat[0]=2;
-			digitalWrite(ports[0].clk, LOW);
-			HAL_TIM_Base_Start_IT(timarray[0]);
-		} else {
-			chstat[0]=3;
-		}
-	} else	if ( htim->Instance == htim2.Instance ) {
-		HAL_TIM_Base_Stop_IT(&htim2);
-		if ( chstat[1]==1 ) {
-			chstat[1]=2;
-			digitalWrite(ports[1].clk, LOW);
-			HAL_TIM_Base_Start_IT(timarray[1]);
-		} else {
-			chstat[1]=3;
-		}
-	} else	if ( htim->Instance == htim3.Instance ) {
-		HAL_TIM_Base_Stop_IT(&htim3);
-		if ( chstat[2]==1 ) {
-			chstat[2]=2;
-			digitalWrite(ports[2].clk, LOW);
-			HAL_TIM_Base_Start_IT(timarray[2]);
-		} else {
-			chstat[2]=3;
-		}
-	} else	if ( htim->Instance == htim4.Instance ) {
-		HAL_TIM_Base_Stop_IT(&htim4);
-		if ( chstat[3]==1 ) {
-			chstat[3]=2;
-			digitalWrite(ports[3].clk, LOW);
-			HAL_TIM_Base_Start_IT(timarray[3]);
-		} else {
-			chstat[3]=3;
+	// どのCH(どのタイマー)の割込みかループで探す。
+	for ( int i=0; i<CHCOUNT; i++) {
+		if ( htim->Instance == timarray[i]->Instance) {
+			HAL_TIM_Base_Stop_IT(timarray[i]);
+			if ( chstat[i]==1 ) { // H期間終了ならここ。CLKをLに下げて同じ時間でタイマー起動。
+				chstat[i]=2;
+				digitalWrite(ports[i].clk, LOW);
+				__HAL_TIM_SET_COUNTER(timarray[i], period[i]/2);
+				HAL_TIM_Base_Start_IT(timarray[i]);
+			} else {			// L期間終了ならここ
+				chstat[i]=3;
+			}
+			break;
 		}
 	}
-
 }
 
 // for DEBUG (printf...)
