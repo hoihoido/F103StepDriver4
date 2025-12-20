@@ -53,8 +53,10 @@
 #define STBYDLY  100  // スタンバイ復帰時の待ち時間(uS)
 
 // 等加速度運動パラメータ
-#define INITVEL  7.5 // 初期速度(mm/S)
-#define MAXVEL  50.0 // 最大速度(mm/S)
+//#define INITVEL  7.5 // 初期速度(mm/S)
+#define INITVEL  4.0 // 初期速度(mm/S)
+//#define MAXVEL  50.0 // 最大速度(mm/S)
+#define MAXVEL  40.0 // 最大速度(mm/S)
 #define ACCEL  500.0 // 加速度(mm/S2)
 #define MARGIN 10    // 減速余裕(pulse)
 
@@ -114,6 +116,9 @@ uint32_t	period[CHCOUNT]={0,0,0,0};
 int32_t		dest[CHCOUNT] = {2600,2600,2600,2600};
 int32_t		currentpt[CHCOUNT] = {MAXPT,MAXPT,MAXPT,MAXPT}; //初期化の為暫定的に上限にする。
 int32_t		velocity[CHCOUNT]={};
+uint8_t stepstartf[CHCOUNT]={false,false,false,false};
+
+bool pulseendf=false;
 
 /* USER CODE END PV */
 
@@ -151,22 +156,16 @@ static uint32_t ticktime()
   return timecounter;
 }
 
-void reservation( uint32_t t, int8_t i, portpin clkpin, bool hl ) {
-	chstat[i]=1;
-	__HAL_TIM_SET_COUNTER(timarray[i], t);
-	HAL_TIM_Base_Start_IT(timarray[i]);
-	if (0==i) digitalWrite(marker, HIGH); // for DEBUG
-}
 
 void onestep(int8_t i, ch* channel, bool ud, uint32_t steptime) {
-	// DEBUG
-	if ( i==0 ) printf("%d:%ld\n",ud,steptime);
   // DIRとCLKを設定する。
   digitalWrite(channel->dir, ud ? HIGH : LOW);
   digitalWrite(channel->clk, HIGH);
 
-  // CLK立下りとL期間終了イベントを予約する。
-  reservation(steptime, i, channel->clk, LOW );
+  // タイマースタート。
+	chstat[i]=1;
+	__HAL_TIM_SET_COUNTER(timarray[i], steptime);
+	HAL_TIM_Base_Start_IT(timarray[i]);
 }
 
 // 等加速度運動による現在速度と周期を計算しモーターを１ステップ進める。。
@@ -214,6 +213,7 @@ void kinematics(int8_t i) {
     }
   }
 
+
   // 移動/現在地更新
   if (currentpt[i] != dest[i]) {
     // 指示に従って移動
@@ -224,6 +224,7 @@ void kinematics(int8_t i) {
       currentpt[i]--;
       onestep(i, &(ports[i]), DOWN, period[i] / 2);
     }
+    //stepstartf[i]=true;
   }
 }
 /* USER CODE END 0 */
@@ -241,6 +242,9 @@ int main(void)
 	uint32_t tickstart;
 	uint32_t btstart=0;
 	int32_t d;
+	uint32_t ap;
+	uint8_t ud;
+	uint8_t si=0;
 
   /* USER CODE END 1 */
 
@@ -290,22 +294,28 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   //HAL_TIM_Base_Start_IT(&htim1);
 
+  // ============================== MAIN LOOP ===============================
   while (1)
   {
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-	  for (int i=0; i<CHCOUNT; i++ ) {
-		  if (chstat[i] == 3) {
-			  chstat[i]=0;
-			  kinematics(i);
+
+	  // 割込みルーチンがフラグを立てていたら以下実行
+	  if (pulseendf) {
+		  for (int i=0; i<CHCOUNT; i++ ) {
+			  if (chstat[i] == 3 && stepstartf[i]==false) {
+				  chstat[i]=0;
+				  kinematics(i);
+			  }
 		  }
+		  pulseendf=false;
 	  }
 
 	  // ボタンを押す度に0と2500を行き来する。
 	  if ( GPIO_PIN_RESET ==  HAL_GPIO_ReadPin(BUTTON_GPIO_Port, BUTTON_Pin ) ) {
 		  if ( 0 == btstart ) btstart = ticktime(&hrtc);
-		  if ( 20 < (ticktime(&hrtc) - btstart) & !step1f ) {
+		  if ( 20 < (ticktime(&hrtc) - btstart) && !step1f ) {
 			  for(int8_t i=0; i<CHCOUNT; i++) {
 				  dest[i] = (0==dest[i])? 2500:0;
 				  kinematics(i);
@@ -318,24 +328,41 @@ int main(void)
 	  }
 
 	  /*
-	  //printf("Start : %ld\n", tickstart);
-	  //printf("4S wait : %ld\n", ticktime(&hrtc));
-	  if ( 3000 < (ticktime(&hrtc)-tickstart) && ! step1f ) {
-		  step1f=true;
-		  for(int8_t i=0; i<CHCOUNT; i++) {
-			  dest[i]=2500;
-			  kinematics(i);
-		  }
-	  }
-	  if ( 4500 < (ticktime(&hrtc)-tickstart) && ! step2f ) {
-		  step2f=true;
-		  for(int8_t i=0; i<CHCOUNT; i++) {
-			  dest[i]=0;
-			  kinematics(i);
-		  }
-	  }
-	*/
+	  if (stepstartf[si]) {
+		  // 次ステップの速度を等加減速で算出
+		  if (currentpt[si] < dest[si]) ud = 1;
+		  else if (dest[si] < currentpt[si]) ud = -1;
+		  else ud = 0;
 
+		  // === 次回のvelocity[]を算出。===
+		  // 減速点apを計算
+		  ap = dest[si] - (velocity[si]
+				  + (0 <= velocity[si] ? initvel : -1 * initvel)) / 2 * (abs(velocity[si]) - initvel) / accel
+			- ud*MARGIN;
+		  // 場合分けして次回の速度velociy[]を計算
+		  if (0 < ud) { // 上昇
+			if (currentpt[si] < ap) {
+			  velocity[si] = velocity[si] + accel * period[si] / 1e6; // 上向きに対し加速
+			  if (maxvel < velocity[si]) velocity[si] = maxvel; // 上限に揃える
+			  if (-1 * initvel < velocity[si] && velocity[si] < initvel) velocity[si] = initvel; // ±initvalの間はすっ飛ばす。
+			} else {
+			  velocity[si] = velocity[si] - accel * period[si] / 1e6; // 上向きに対し減速
+			  if (velocity[si] < initvel) velocity[si] = initvel; // 下限に揃える
+			}
+		  } else if (ud < 0) { // 下降
+			if (ap < currentpt[si]) {
+			  velocity[si] = velocity[si] - accel * period[si] / 1e6; // 上向きに対し減速(下に加速)
+			  if (velocity[si] < -1 * maxvel) velocity[si] = -1 * maxvel;
+			  if (-1 * initvel < velocity[si] && velocity[si] < initvel) velocity[si] = -1 * initvel; // ±initvalの間はすっ飛ばす。
+			} else {
+			  velocity[si] = velocity[si] + accel * period[si] / 1e6; // 上向きに対し加速(下に減速)
+			  if (-1 * initvel < velocity[si]) velocity[si] = -1 * initvel;
+			}
+		  }
+		  stepstartf[si]=false;
+		  if (++si == CHCOUNT) si=0;
+	  }
+	  */
   }
   /* USER CODE END 3 */
 }
@@ -669,16 +696,15 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 	// どのCH(どのタイマー)の割込みかループで探す。
 	for ( int i=0; i<CHCOUNT; i++) {
 		if ( htim->Instance == timarray[i]->Instance) {
-			if (0==i) digitalWrite(marker, LOW); // for DEBUG
 			HAL_TIM_Base_Stop_IT(timarray[i]);
 			if ( chstat[i]==1 ) { // H期間終了ならここ。CLKをLに下げて同じ時間でタイマー起動。
 				chstat[i]=2;
 				digitalWrite(ports[i].clk, LOW);
 				__HAL_TIM_SET_COUNTER(timarray[i], period[i]/2);
 				HAL_TIM_Base_Start_IT(timarray[i]);
-				if (0==i) digitalWrite(marker, HIGH); // for DEBUG
 			} else {			// L期間終了ならここ
 				chstat[i]=3;
+				pulseendf=true;
 			}
 			break;
 		}
