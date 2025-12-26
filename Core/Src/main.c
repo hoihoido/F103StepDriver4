@@ -63,6 +63,8 @@
 // 絶対値マクロ
 #define abs(x) (x<0 ? x*-1 : x)
 
+// IIC用
+#define IICBUFSIZE 32
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -71,6 +73,8 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+I2C_HandleTypeDef hi2c1;
+
 RTC_HandleTypeDef hrtc;
 
 TIM_HandleTypeDef htim1;
@@ -119,6 +123,8 @@ int32_t		velocity[CHCOUNT]={};
 uint8_t stepstartf[CHCOUNT]={false,false,false,false};
 
 bool pulseendf=false;
+bool i2crcvf = false;
+uint8_t buf[128];
 
 /* USER CODE END PV */
 
@@ -130,6 +136,7 @@ static void MX_TIM1_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_TIM3_Init(void);
 static void MX_TIM4_Init(void);
+static void MX_I2C1_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -271,6 +278,7 @@ int main(void)
   MX_TIM2_Init();
   MX_TIM3_Init();
   MX_TIM4_Init();
+  MX_I2C1_Init();
   /* USER CODE BEGIN 2 */
 
   tickstart = ticktime(&hrtc);
@@ -288,6 +296,10 @@ int main(void)
       dest[i]=0;          // そして目標値を0。
       kinematics(i);      // 動作開始。
   }
+
+  if ( HAL_I2C_Slave_Receive_IT(&hi2c1, (uint8_t *)buf, IICBUFSIZE) != HAL_OK) {
+	  Error_Handler();
+  }
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -301,6 +313,22 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
 
+		if ( i2crcvf ) {
+			for (int i=0 ; i < 4 ; i++ ) {
+				int val = buf[i*2]*256+buf[i*2+1];
+				if ( dest[i] != val) {
+					dest[i]=val;
+					kinematics(i);
+				}
+				printf( "%d:",val );
+			}
+			putchar('\n');
+			i2crcvf = false;
+			if ( HAL_I2C_Slave_Receive_IT(&hi2c1, (uint8_t *)buf, 128) != HAL_OK) {
+			  Error_Handler();
+			}
+		}
+
 	  // 割込みルーチンがフラグを立てていたら以下実行
 	  if (pulseendf) {
 		  for (int i=0; i<CHCOUNT; i++ ) {
@@ -312,6 +340,7 @@ int main(void)
 		  pulseendf=false;
 	  }
 
+	  /*
 	  // ボタンを押す度に0と2500を行き来する。
 	  if ( GPIO_PIN_RESET ==  HAL_GPIO_ReadPin(BUTTON_GPIO_Port, BUTTON_Pin ) ) {
 		  if ( 0 == btstart ) btstart = ticktime(&hrtc);
@@ -326,43 +355,8 @@ int main(void)
 		  btstart=0;
 		  step1f=false;
 	  }
+	*/
 
-	  /*
-	  if (stepstartf[si]) {
-		  // 次ステップの速度を等加減速で算出
-		  if (currentpt[si] < dest[si]) ud = 1;
-		  else if (dest[si] < currentpt[si]) ud = -1;
-		  else ud = 0;
-
-		  // === 次回のvelocity[]を算出。===
-		  // 減速点apを計算
-		  ap = dest[si] - (velocity[si]
-				  + (0 <= velocity[si] ? initvel : -1 * initvel)) / 2 * (abs(velocity[si]) - initvel) / accel
-			- ud*MARGIN;
-		  // 場合分けして次回の速度velociy[]を計算
-		  if (0 < ud) { // 上昇
-			if (currentpt[si] < ap) {
-			  velocity[si] = velocity[si] + accel * period[si] / 1e6; // 上向きに対し加速
-			  if (maxvel < velocity[si]) velocity[si] = maxvel; // 上限に揃える
-			  if (-1 * initvel < velocity[si] && velocity[si] < initvel) velocity[si] = initvel; // ±initvalの間はすっ飛ばす。
-			} else {
-			  velocity[si] = velocity[si] - accel * period[si] / 1e6; // 上向きに対し減速
-			  if (velocity[si] < initvel) velocity[si] = initvel; // 下限に揃える
-			}
-		  } else if (ud < 0) { // 下降
-			if (ap < currentpt[si]) {
-			  velocity[si] = velocity[si] - accel * period[si] / 1e6; // 上向きに対し減速(下に加速)
-			  if (velocity[si] < -1 * maxvel) velocity[si] = -1 * maxvel;
-			  if (-1 * initvel < velocity[si] && velocity[si] < initvel) velocity[si] = -1 * initvel; // ±initvalの間はすっ飛ばす。
-			} else {
-			  velocity[si] = velocity[si] + accel * period[si] / 1e6; // 上向きに対し加速(下に減速)
-			  if (-1 * initvel < velocity[si]) velocity[si] = -1 * initvel;
-			}
-		  }
-		  stepstartf[si]=false;
-		  if (++si == CHCOUNT) si=0;
-	  }
-	  */
   }
   /* USER CODE END 3 */
 }
@@ -411,6 +405,40 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
+}
+
+/**
+  * @brief I2C1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_I2C1_Init(void)
+{
+
+  /* USER CODE BEGIN I2C1_Init 0 */
+
+  /* USER CODE END I2C1_Init 0 */
+
+  /* USER CODE BEGIN I2C1_Init 1 */
+
+  /* USER CODE END I2C1_Init 1 */
+  hi2c1.Instance = I2C1;
+  hi2c1.Init.ClockSpeed = 100000;
+  hi2c1.Init.DutyCycle = I2C_DUTYCYCLE_2;
+  hi2c1.Init.OwnAddress1 = 0;
+  hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
+  hi2c1.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
+  hi2c1.Init.OwnAddress2 = 0;
+  hi2c1.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
+  hi2c1.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
+  if (HAL_I2C_Init(&hi2c1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN I2C1_Init 2 */
+
+  /* USER CODE END I2C1_Init 2 */
+
 }
 
 /**
@@ -722,6 +750,20 @@ int _write(int file, char *ptr, int len)
   return len;
 }
 
+void HAL_I2C_SlaveRxCpltCallback(I2C_HandleTypeDef * hi2c) {
+	i2crcvf=true;
+}
+
+void HAL_I2C_ErrorCallback(I2C_HandleTypeDef *hi2c ) {
+  if(hi2c->Instance == I2C1) {
+
+	  if ( HAL_I2C_ERROR_AF == HAL_I2C_GetError(hi2c)) {
+		i2crcvf=true;
+	    return;
+	  }
+	  Error_Handler();
+  }
+}
 /* USER CODE END 4 */
 
 /**
