@@ -143,6 +143,11 @@ static void MX_I2C1_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+void I2C_RESET( void ){
+  HAL_I2C_DeInit(&hi2c1) ;
+  HAL_I2C_Init(&hi2c1) ;
+}
+
 void digitalWrite(portpin pp , int level) {
         HAL_GPIO_WritePin(pp.port, pp.bit, level);
 }
@@ -327,6 +332,7 @@ int main(void)
 			if ( HAL_I2C_Slave_Receive_IT(&hi2c1, (uint8_t *)buf, 128) != HAL_OK) {
 			  Error_Handler();
 			}
+			pulseendf=true;
 		}
 
 	  // 割込みルーチンがフラグを立てていたら以下実行
@@ -425,7 +431,7 @@ static void MX_I2C1_Init(void)
   hi2c1.Instance = I2C1;
   hi2c1.Init.ClockSpeed = 100000;
   hi2c1.Init.DutyCycle = I2C_DUTYCYCLE_2;
-  hi2c1.Init.OwnAddress1 = 0;
+  hi2c1.Init.OwnAddress1 = 2;
   hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
   hi2c1.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
   hi2c1.Init.OwnAddress2 = 0;

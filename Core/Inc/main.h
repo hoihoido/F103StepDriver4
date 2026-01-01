@@ -75,11 +75,11 @@ void Error_Handler(void);
 #define CH2CLK_GPIO_Port GPIOB
 #define CH2EN_Pin GPIO_PIN_1
 #define CH2EN_GPIO_Port GPIOB
-#define CH3DIR_Pin GPIO_PIN_2
+#define CH3DIR_Pin GPIO_PIN_10
 #define CH3DIR_GPIO_Port GPIOB
-#define CH3CLK_Pin GPIO_PIN_10
+#define CH3CLK_Pin GPIO_PIN_11
 #define CH3CLK_GPIO_Port GPIOB
-#define CH3EN_Pin GPIO_PIN_11
+#define CH3EN_Pin GPIO_PIN_12
 #define CH3EN_GPIO_Port GPIOB
 #define BUTTON_Pin GPIO_PIN_10
 #define BUTTON_GPIO_Port GPIOA
