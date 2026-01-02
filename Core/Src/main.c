@@ -56,8 +56,9 @@
 //#define INITVEL  7.5 // 初期速度(mm/S)
 #define INITVEL  4.0 // 初期速度(mm/S)
 //#define MAXVEL  50.0 // 最大速度(mm/S)
-#define MAXVEL  40.0 // 最大速度(mm/S)
-#define ACCEL  500.0 // 加速度(mm/S2)
+#define MAXVEL  7.0 // 最大速度(mm/S)
+//#define ACCEL  250.0 //500.0 // 加速度(mm/S2)
+#define ACCEL  50.0 //500.0 // 加速度(mm/S2)
 #define MARGIN 10    // 減速余裕(pulse)
 
 // 絶対値マクロ
@@ -120,7 +121,9 @@ uint32_t	period[CHCOUNT]={0,0,0,0};
 int32_t		dest[CHCOUNT] = {2600,2600,2600,2600};
 int32_t		currentpt[CHCOUNT] = {MAXPT,MAXPT,MAXPT,MAXPT}; //初期化の為暫定的に上限にする。
 int32_t		velocity[CHCOUNT]={};
-uint8_t stepstartf[CHCOUNT]={false,false,false,false};
+uint8_t		stepstartf[CHCOUNT]={false,false,false,false};
+uint32_t	stbytime[CHCOUNT]={0,0,0,0};
+bool		stbyf[CHCOUNT];
 
 bool pulseendf=false;
 bool i2crcvf = false;
@@ -170,6 +173,13 @@ static uint32_t ticktime()
 
 
 void onestep(int8_t i, ch* channel, bool ud, uint32_t steptime) {
+	// スタンバイモードからの復帰
+	if ( stbyf[i] ) {
+		digitalWrite(ports[i].enbl, HIGH);
+		stbyf[i]=false;
+	}
+	stbytime[i] = ticktime(&hrtc);
+
   // DIRとCLKを設定する。
   digitalWrite(channel->dir, ud ? HIGH : LOW);
   digitalWrite(channel->clk, HIGH);
@@ -251,7 +261,7 @@ int main(void)
   /* USER CODE BEGIN 1 */
 	bool step1f=false;
 	bool step2f=false;
-	uint32_t tickstart;
+	//uint32_t tickstart;
 	uint32_t btstart=0;
 	int32_t d;
 	uint32_t ap;
@@ -286,7 +296,7 @@ int main(void)
   MX_I2C1_Init();
   /* USER CODE BEGIN 2 */
 
-  tickstart = ticktime(&hrtc);
+  //tickstart = ticktime(&hrtc);
 
   // その他変数の準備
   lperstep = LENGTH / MAXPT; // length/step(mm)
@@ -318,14 +328,15 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
 
+	  // I2C受信データあり
 		if ( i2crcvf ) {
 			for (int i=0 ; i < 4 ; i++ ) {
 				int val = buf[i*2]*256+buf[i*2+1];
 				if ( dest[i] != val) {
 					dest[i]=val;
+					printf( "%d:",val );
 					kinematics(i);
 				}
-				printf( "%d:",val );
 			}
 			putchar('\n');
 			i2crcvf = false;
@@ -344,6 +355,14 @@ int main(void)
 			  }
 		  }
 		  pulseendf=false;
+	  }
+
+	  // 一定時間動作が無ければイネーブル端子をLにする。
+	  for ( int i=0 ; i<CHCOUNT; i++ ) {
+		  if ( (stbyf[i] == false ) &&  (STBYTIME < (ticktime(&hrtc) - stbytime[i])) ) {
+			  digitalWrite(ports[i].enbl, LOW);
+			  stbyf[i] = true;
+		  }
 	  }
 
 	  /*
