@@ -14,7 +14,10 @@
   * If no LICENSE file comes with this software, it is provided AS-IS.
   *
   ******************************************************************************
+
+  2026-01-04 テーブル方式作成開始
   */
+
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
@@ -53,13 +56,15 @@
 #define STBYDLY  100  // スタンバイ復帰時の待ち時間(uS)
 
 // 等加速度運動パラメータ
-//#define INITVEL  7.5 // 初期速度(mm/S)
-#define INITVEL  4.0 // 初期速度(mm/S)
-//#define MAXVEL  50.0 // 最大速度(mm/S)
-#define MAXVEL  7.0 // 最大速度(mm/S)
-//#define ACCEL  250.0 //500.0 // 加速度(mm/S2)
-#define ACCEL  50.0 //500.0 // 加速度(mm/S2)
+#define INITVEL  7.5 // 初期速度(mm/S)
+//#define INITVEL  4.0 // 初期速度(mm/S)
+#define MAXVEL  50.0 // 最大速度(mm/S)
+//#define MAXVEL  7.0 // 最大速度(mm/S)
+#define ACCEL  512.0 //500.0 // 加速度(mm/S2)
+//#define ACCEL  50.0 //500.0 // 加速度(mm/S2)
 #define MARGIN 10    // 減速余裕(pulse)
+
+#define MAXTBL 1500
 
 // 絶対値マクロ
 #define abs(x) (x<0 ? x*-1 : x)
@@ -84,6 +89,7 @@ TIM_HandleTypeDef htim3;
 TIM_HandleTypeDef htim4;
 
 /* USER CODE BEGIN PV */
+
 TIM_HandleTypeDef* timarray[] = {
 	&htim1,
 	&htim2,
@@ -124,6 +130,9 @@ int32_t		velocity[CHCOUNT]={};
 uint8_t		stepstartf[CHCOUNT]={false,false,false,false};
 uint32_t	stbytime[CHCOUNT]={0,0,0,0};
 bool		stbyf[CHCOUNT];
+
+uint16_t acctable[MAXTBL]; // 加減速周期テーブル
+int16_t tablept[CHCOUNT]={0,0,0,0};
 
 bool pulseendf=false;
 bool i2crcvf = false;
@@ -171,6 +180,32 @@ static uint32_t ticktime()
   return timecounter;
 }
 
+// 加速度テーブル作成
+void maketable() {
+	int i;
+	float velocity;
+	float period;
+	bool endf=false;
+
+	velocity=INITVEL;    // 初期速度[steps/S]
+	for ( i=0; i<MAXTBL; i++) {
+		period=lperstep/velocity; // 周期[S]
+		acctable[i]=(uint16_t)(period*1e6); // 周期[uS]
+		if ( endf ) {
+			acctable[i+1]=0;
+			break;
+		}
+		if ( i==MAXTBL-1) {
+			acctable[MAXTBL-1]=0;
+			break;
+		}
+		velocity = velocity + ACCEL * period; // 次回の加速済の速度
+		if (MAXVEL <= velocity) {
+			velocity = MAXVEL; // 上限に揃える
+			endf = true;
+		}
+	}
+}
 
 void onestep(int8_t i, ch* channel, bool ud, uint32_t steptime) {
 	// スタンバイモードからの復帰
@@ -195,58 +230,18 @@ void kinematics(int8_t i) {
   int ap;
   int ud;
 
-  // velocity[]から次回迄のperiod[]を算出。
-  period[i] = abs(1e6 / velocity[i]); // 周期[uS]
-
-  // currentpt[]とdest[]を比べてUP/DOWN/=を判断する。それに応じud[]を設定する。
-  //      ud[] -1:DOWN 0:STOP +1:UP
-  // ud[]に応じてDIRを設定。
-  if (currentpt[i] < dest[i]) {
-    ud = 1;
+  if (currentpt[i] < dest[i])  {
+	  onestep(i, &(ports[i]), 0<=tablept[i]? UP:DOWN, acctable[abs(tablept[i])] / 2);
+	  if ( tablept[i] < (dest[i] - currentpt[i] ) && (0 != acctable[abs(tablept[i+1])]) )
+		  i++;
+	  else if ( (dest[i] - currentpt[i] ) < tablept[i] && (0 != acctable[abs(tablept[i-1])]) )
+		  i--;
   } else if (dest[i] < currentpt[i]) {
-    ud = -1;
-  } else {
-    ud = 0;
-  }
-
-  // === 次回のvelocity[]を算出。===
-  // 減速点apを計算
-  ap = dest[i] - (velocity[i]
-		  + (0 <= velocity[i] ? initvel : -1 * initvel)) / 2 * (abs(velocity[i]) - initvel) / accel
-    - ud*MARGIN;
-  // 場合分けして次回の速度velociy[]を計算
-  if (0 < ud) { // 上昇
-    if (currentpt[i] < ap) {
-      velocity[i] = velocity[i] + accel * period[i] / 1e6; // 上向きに対し加速
-      if (maxvel < velocity[i]) velocity[i] = maxvel; // 上限に揃える
-      if (-1 * initvel < velocity[i] && velocity[i] < initvel) velocity[i] = initvel; // ±initvalの間はすっ飛ばす。
-    } else {
-      velocity[i] = velocity[i] - accel * period[i] / 1e6; // 上向きに対し減速
-      if (velocity[i] < initvel) velocity[i] = initvel; // 下限に揃える
-    }
-  } else if (ud < 0) { // 下降
-    if (ap < currentpt[i]) {
-      velocity[i] = velocity[i] - accel * period[i] / 1e6; // 上向きに対し減速(下に加速)
-      if (velocity[i] < -1 * maxvel) velocity[i] = -1 * maxvel;
-      if (-1 * initvel < velocity[i] && velocity[i] < initvel) velocity[i] = -1 * initvel; // ±initvalの間はすっ飛ばす。
-    } else {
-      velocity[i] = velocity[i] + accel * period[i] / 1e6; // 上向きに対し加速(下に減速)
-      if (-1 * initvel < velocity[i]) velocity[i] = -1 * initvel;
-    }
-  }
-
-
-  // 移動/現在地更新
-  if (currentpt[i] != dest[i]) {
-    // 指示に従って移動
-    if (0 <= velocity[i]) {
-      currentpt[i]++;
-      onestep(i, &(ports[i]), UP, period[i] / 2);
-    } else {
-      currentpt[i]--;
-      onestep(i, &(ports[i]), DOWN, period[i] / 2);
-    }
-    //stepstartf[i]=true;
+	  onestep(i, &(ports[i]), 0<=tablept[i]? UP:DOWN, acctable[abs(tablept[i])] / 2 );
+	  if ( (dest[i] - currentpt[i] ) < tablept[i] && (0 != acctable[abs(tablept[i-1])]) )
+		  i--;
+	  else if ( (dest[i] - currentpt[i] ) < tablept[i] && (0 != acctable[abs(tablept[i+1])]) )
+		  i++;
   }
 }
 /* USER CODE END 0 */
@@ -295,7 +290,6 @@ int main(void)
   MX_TIM4_Init();
   MX_I2C1_Init();
   /* USER CODE BEGIN 2 */
-
   //tickstart = ticktime(&hrtc);
 
   // その他変数の準備
@@ -303,6 +297,8 @@ int main(void)
   initvel = INITVEL / lperstep; // step/S
   maxvel = MAXVEL / lperstep; // step/S
   accel = ACCEL / lperstep; // step/S2
+
+  maketable();
 
   // 初期化
   for(int8_t i=0; i<CHCOUNT; i++) {
