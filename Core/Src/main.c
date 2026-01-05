@@ -58,10 +58,10 @@
 // 等加速度運動パラメータ
 #define INITVEL  7.5 // 初期速度(mm/S)
 //#define INITVEL  4.0 // 初期速度(mm/S)
-#define MAXVEL  50.0 // 最大速度(mm/S)
-//#define MAXVEL  7.0 // 最大速度(mm/S)
-#define ACCEL  512.0 //500.0 // 加速度(mm/S2)
-//#define ACCEL  50.0 //500.0 // 加速度(mm/S2)
+//#define MAXVEL  50.0 // 最大速度(mm/S)
+#define MAXVEL  20.0 // 最大速度(mm/S)
+//#define ACCEL  512.0 //500.0 // 加速度(mm/S2)
+#define ACCEL  50.0 //500.0 // 加速度(mm/S2)
 #define MARGIN 10    // 減速余裕(pulse)
 
 #define MAXTBL 1500
@@ -125,14 +125,15 @@ long  maxvel;
 long  accel; // 加速度 steps/S2
 uint32_t	period[CHCOUNT]={0,0,0,0};
 int32_t		dest[CHCOUNT] = {2600,2600,2600,2600};
-int32_t		currentpt[CHCOUNT] = {MAXPT,MAXPT,MAXPT,MAXPT}; //初期化の為暫定的に上限にする。
+//int32_t		currentpt[CHCOUNT] = {MAXPT,MAXPT,MAXPT,MAXPT}; //初期化の為暫定的に上限にする。
+int32_t		currentpt[CHCOUNT] = {2500,2500,2500,2500};
 int32_t		velocity[CHCOUNT]={};
 uint8_t		stepstartf[CHCOUNT]={false,false,false,false};
 uint32_t	stbytime[CHCOUNT]={0,0,0,0};
 bool		stbyf[CHCOUNT];
 
 uint16_t acctable[MAXTBL]; // 加減速周期テーブル
-int16_t tablept[CHCOUNT]={0,0,0,0};
+int16_t velocipt[CHCOUNT]={0,0,0,0};
 
 bool pulseendf=false;
 bool i2crcvf = false;
@@ -190,7 +191,7 @@ void maketable() {
 	velocity=INITVEL;    // 初期速度[steps/S]
 	for ( i=0; i<MAXTBL; i++) {
 		period=lperstep/velocity; // 周期[S]
-		acctable[i]=(uint16_t)(period*1e6); // 周期[uS]
+		acctable[i]=(uint16_t)(period*1e6)/2; // 半周期[uS]
 		if ( endf ) {
 			acctable[i+1]=0;
 			break;
@@ -199,7 +200,7 @@ void maketable() {
 			acctable[MAXTBL-1]=0;
 			break;
 		}
-		velocity = velocity + ACCEL * period; // 次回の加速済の速度
+		velocity = velocity + ACCEL * period; // 次回の速度
 		if (MAXVEL <= velocity) {
 			velocity = MAXVEL; // 上限に揃える
 			endf = true;
@@ -229,19 +230,35 @@ void onestep(int8_t i, ch* channel, bool ud, uint32_t steptime) {
 void kinematics(int8_t i) {
   int ap;
   int ud;
+  int tablept;
+  int16_t way;
+#ifdef DEBUG
+  printf("kinematics %d %ld %ld %ld\n",i,dest[i],currentpt[i],velocipt[i]);
+#endif
 
-  if (currentpt[i] < dest[i])  {
-	  onestep(i, &(ports[i]), 0<=tablept[i]? UP:DOWN, acctable[abs(tablept[i])] / 2);
-	  if ( tablept[i] < (dest[i] - currentpt[i] ) && (0 != acctable[abs(tablept[i+1])]) )
-		  i++;
-	  else if ( (dest[i] - currentpt[i] ) < tablept[i] && (0 != acctable[abs(tablept[i-1])]) )
-		  i--;
-  } else if (dest[i] < currentpt[i]) {
-	  onestep(i, &(ports[i]), 0<=tablept[i]? UP:DOWN, acctable[abs(tablept[i])] / 2 );
-	  if ( (dest[i] - currentpt[i] ) < tablept[i] && (0 != acctable[abs(tablept[i-1])]) )
-		  i--;
-	  else if ( (dest[i] - currentpt[i] ) < tablept[i] && (0 != acctable[abs(tablept[i+1])]) )
-		  i++;
+  way = dest[i] - currentpt[i]; // 目的地までの道のり（±）
+  tablept=abs(velocipt[i]);
+
+  if ( 0 < way)  {
+	  // 上り
+	  onestep(i, &(ports[i]), 0<=velocipt[i]? UP:DOWN, acctable[tablept]);
+	  if ( ((way-MARGIN) < velocipt[i]) && (0 < velocipt[i]) )
+	  		  velocipt[i]--; // 上方向に減速
+	  else if ( velocipt[i] < way && (0 != acctable[tablept+1]) )
+		  velocipt[i]++; // 上方向に加速(下方向に減速も含む)
+	  currentpt[i]++;
+  } else if ( way < 0 ) {
+	  // 下り
+	  onestep(i, &(ports[i]), 0<=velocipt[i]? UP:DOWN, acctable[tablept]);
+	  if ( (velocipt[i] < (way+MARGIN))  && (-1 != velocipt[i]) )
+	  		  velocipt[i]++; // 下方向に減速
+	  else if ( way < velocipt[i] && (0 != acctable[tablept+1]) )
+		  velocipt[i]--; // 下方向に加速(上方向に減速も含む)
+	  currentpt[i]--;
+  } else {
+#ifdef DEBUG
+	  printf("STOP %d\n",i);
+#endif
   }
 }
 /* USER CODE END 0 */
@@ -330,7 +347,9 @@ int main(void)
 				int val = buf[i*2]*256+buf[i*2+1];
 				if ( dest[i] != val) {
 					dest[i]=val;
+#ifdef DEBUG
 					printf( "%d:",val );
+#endif
 					kinematics(i);
 				}
 			}
@@ -360,23 +379,6 @@ int main(void)
 			  stbyf[i] = true;
 		  }
 	  }
-
-	  /*
-	  // ボタンを押す度に0と2500を行き来する。
-	  if ( GPIO_PIN_RESET ==  HAL_GPIO_ReadPin(BUTTON_GPIO_Port, BUTTON_Pin ) ) {
-		  if ( 0 == btstart ) btstart = ticktime(&hrtc);
-		  if ( 20 < (ticktime(&hrtc) - btstart) && !step1f ) {
-			  for(int8_t i=0; i<CHCOUNT; i++) {
-				  dest[i] = (0==dest[i])? 2500:0;
-				  kinematics(i);
-			  }
-			  step1f=true;
-		  }
-	  } else {
-		  btstart=0;
-		  step1f=false;
-	  }
-	*/
 
   }
   /* USER CODE END 3 */
@@ -749,7 +751,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 			if ( chstat[i]==1 ) { // H期間終了ならここ。CLKをLに下げて同じ時間でタイマー起動。
 				chstat[i]=2;
 				digitalWrite(ports[i].clk, LOW);
-				__HAL_TIM_SET_COUNTER(timarray[i], period[i]/2);
+				__HAL_TIM_SET_COUNTER(timarray[i], acctable[abs(velocipt[i])]);
 				HAL_TIM_Base_Start_IT(timarray[i]);
 			} else {			// L期間終了ならここ
 				chstat[i]=3;
