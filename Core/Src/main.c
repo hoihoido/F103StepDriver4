@@ -56,12 +56,12 @@
 #define STBYDLY  100  // スタンバイ復帰時の待ち時間(uS)
 
 // 等加速度運動パラメータ
-#define INITVEL  7.5 // 初期速度(mm/S)
-//#define INITVEL  4.0 // 初期速度(mm/S)
+//#define INITVEL  7.5 // 初期速度(mm/S)
+#define INITVEL  4.0 // 初期速度(mm/S)
 //#define MAXVEL  50.0 // 最大速度(mm/S)
-#define MAXVEL  20.0 // 最大速度(mm/S)
+#define MAXVEL  10.0 // 最大速度(mm/S)
 //#define ACCEL  512.0 //500.0 // 加速度(mm/S2)
-#define ACCEL  50.0 //500.0 // 加速度(mm/S2)
+#define ACCEL  10.0 //500.0 // 加速度(mm/S2)
 #define MARGIN 10    // 減速余裕(pulse)
 
 #define MAXTBL 1500
