@@ -49,7 +49,6 @@
 // 動作範囲
 #define LENGTH 8.2  // アクチュエータのストローク(mm)
 #define MAXPT  2600 // 最大パルス数
-#define INITCT 2700 // 初期化時に下げる数(強制脱調)
 
 // 時間定数
 #define STBYTIME 1000 // 不動時間がこれ以上あるとスタンバイ(mS)
@@ -57,11 +56,11 @@
 
 // 等加速度運動パラメータ
 //#define INITVEL  7.5 // 初期速度(mm/S)
-#define INITVEL  4.0 // 初期速度(mm/S)
+#define INITVEL  6.0 // 初期速度(mm/S)
 //#define MAXVEL  50.0 // 最大速度(mm/S)
-#define MAXVEL  10.0 // 最大速度(mm/S)
+#define MAXVEL  20.0 // 最大速度(mm/S)
 //#define ACCEL  512.0 //500.0 // 加速度(mm/S2)
-#define ACCEL  10.0 //500.0 // 加速度(mm/S2)
+#define ACCEL  20.0 //500.0 // 加速度(mm/S2)
 #define MARGIN 10    // 減速余裕(pulse)
 
 #define MAXTBL 1500
@@ -216,11 +215,11 @@ void onestep(int8_t i, ch* channel, bool ud, uint32_t steptime) {
 	}
 	stbytime[i] = ticktime(&hrtc);
 
-  // DIRとCLKを設定する。
-  digitalWrite(channel->dir, ud ? HIGH : LOW);
-  digitalWrite(channel->clk, HIGH);
+	// DIRとCLKを設定する。
+	digitalWrite(channel->dir, ud ? HIGH : LOW);
+	digitalWrite(channel->clk, HIGH);
 
-  // タイマースタート。
+	// タイマースタート。
 	chstat[i]=1;
 	__HAL_TIM_SET_COUNTER(timarray[i], steptime);
 	HAL_TIM_Base_Start_IT(timarray[i]);
@@ -228,8 +227,6 @@ void onestep(int8_t i, ch* channel, bool ud, uint32_t steptime) {
 
 // 等加速度運動による現在速度と周期を計算しモーターを１ステップ進める。。
 void kinematics(int8_t i) {
-  int ap;
-  int ud;
   int tablept;
   int16_t way;
 #ifdef DEBUG
@@ -271,14 +268,6 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
-	bool step1f=false;
-	bool step2f=false;
-	//uint32_t tickstart;
-	uint32_t btstart=0;
-	int32_t d;
-	uint32_t ap;
-	uint8_t ud;
-	uint8_t si=0;
 
   /* USER CODE END 1 */
 
@@ -360,17 +349,6 @@ int main(void)
 			}
 			pulseendf=true;
 		}
-
-	  // 割込みルーチンがフラグを立てていたら以下実行
-	  if (pulseendf) {
-		  for (int i=0; i<CHCOUNT; i++ ) {
-			  if (chstat[i] == 3 && stepstartf[i]==false) {
-				  chstat[i]=0;
-				  kinematics(i);
-			  }
-		  }
-		  pulseendf=false;
-	  }
 
 	  // 一定時間動作が無ければイネーブル端子をLにする。
 	  for ( int i=0 ; i<CHCOUNT; i++ ) {
@@ -754,8 +732,8 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 				__HAL_TIM_SET_COUNTER(timarray[i], acctable[abs(velocipt[i])]);
 				HAL_TIM_Base_Start_IT(timarray[i]);
 			} else {			// L期間終了ならここ
-				chstat[i]=3;
-				pulseendf=true;
+				chstat[i]=0;
+				kinematics(i);
 			}
 			break;
 		}
