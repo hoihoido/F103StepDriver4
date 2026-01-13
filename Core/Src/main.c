@@ -70,6 +70,9 @@
 
 // IIC用
 #define IICBUFSIZE 32
+
+#define digitalRead(pp) (HAL_GPIO_ReadPin(pp.port, pp.bit ))
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -112,6 +115,11 @@ ch ports[] = {
   {{ CH1DIR_GPIO_Port, CH1DIR_Pin },{ CH1CLK_GPIO_Port, CH1CLK_Pin },{ CH1EN_GPIO_Port, CH1EN_Pin }},
   {{ CH2DIR_GPIO_Port, CH2DIR_Pin },{ CH2CLK_GPIO_Port, CH2CLK_Pin },{ CH2EN_GPIO_Port, CH2EN_Pin }},
   {{ CH3DIR_GPIO_Port, CH3DIR_Pin },{ CH3CLK_GPIO_Port, CH3CLK_Pin },{ CH3EN_GPIO_Port, CH3EN_Pin }}
+};
+
+portpin ids[] = {
+	{ID0_GPIO_Port, ID0_Pin},{ID1_GPIO_Port, ID1_Pin},
+	{ID2_GPIO_Port, ID2_Pin},{ID3_GPIO_Port, ID3_Pin}
 };
 
 portpin marker={MARKER_GPIO_Port, MARKER_Pin};
@@ -163,7 +171,11 @@ void I2C_RESET( void ){
 void digitalWrite(portpin pp , int level) {
         HAL_GPIO_WritePin(pp.port, pp.bit, level);
 }
-
+/*
+GPIO_PinState digitalRead(portpin pp) {
+	return(HAL_GPIO_ReadPin(pp.port, pp.bit ));
+}
+*/
 // RTC_ReadTimeCounter()からパクった。(RTC_ReadTimeCounter()は外に公開するヘッダに載ってないので）。
 static uint32_t ticktime()
 {
@@ -417,7 +429,12 @@ static void MX_I2C1_Init(void)
 {
 
   /* USER CODE BEGIN I2C1_Init 0 */
-
+	int id = (digitalRead(ids[3])<<3) + (digitalRead(ids[2])<<2)
+			+ (digitalRead(ids[1])<<1) + digitalRead(ids[0]);
+	hi2c1.Init.OwnAddress1 = (id+1)<<1;
+#ifdef DEBUG
+	printf("I2C ID=%d\n",id);
+#endif
   /* USER CODE END I2C1_Init 0 */
 
   /* USER CODE BEGIN I2C1_Init 1 */
@@ -426,7 +443,7 @@ static void MX_I2C1_Init(void)
   hi2c1.Instance = I2C1;
   hi2c1.Init.ClockSpeed = 100000;
   hi2c1.Init.DutyCycle = I2C_DUTYCYCLE_2;
-  hi2c1.Init.OwnAddress1 = 2;
+  //hi2c1.Init.OwnAddress1 = 2;
   hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
   hi2c1.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
   hi2c1.Init.OwnAddress2 = 0;
@@ -707,6 +724,18 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : ID0_Pin ID1_Pin ID2_Pin */
+  GPIO_InitStruct.Pin = ID0_Pin|ID1_Pin|ID2_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_PULLDOWN;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : ID3_Pin */
+  GPIO_InitStruct.Pin = ID3_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_PULLDOWN;
+  HAL_GPIO_Init(ID3_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pin : BUTTON_Pin */
   GPIO_InitStruct.Pin = BUTTON_Pin;

@@ -81,6 +81,14 @@ void Error_Handler(void);
 #define CH3CLK_GPIO_Port GPIOB
 #define CH3EN_Pin GPIO_PIN_12
 #define CH3EN_GPIO_Port GPIOB
+#define ID0_Pin GPIO_PIN_13
+#define ID0_GPIO_Port GPIOB
+#define ID1_Pin GPIO_PIN_14
+#define ID1_GPIO_Port GPIOB
+#define ID2_Pin GPIO_PIN_15
+#define ID2_GPIO_Port GPIOB
+#define ID3_Pin GPIO_PIN_8
+#define ID3_GPIO_Port GPIOA
 #define BUTTON_Pin GPIO_PIN_10
 #define BUTTON_GPIO_Port GPIOA
 #define MARKER_Pin GPIO_PIN_11
