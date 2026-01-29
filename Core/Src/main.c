@@ -277,10 +277,10 @@ void kinematics(int8_t i) {
 
 	  tablept=abs(velocipt[i]);
 	  if (0<velocipt[i]) {
-		  //onestep(i, &(ports[i]), UP, acctable[tablept]);
+		  onestep(i, &(ports[i]), UP, acctable[tablept]);
 	      currentpt[i]++;
 	  } else {
-	      //onestep(i, &(ports[i]), DOWN, acctable[tablept]);
+	      onestep(i, &(ports[i]), DOWN, acctable[tablept]);
 	      currentpt[i]--;
 	  }
   } else {
