@@ -117,6 +117,7 @@ ch ports[] = {
   {{ CH3DIR_GPIO_Port, CH3DIR_Pin },{ CH3CLK_GPIO_Port, CH3CLK_Pin },{ CH3EN_GPIO_Port, CH3EN_Pin }}
 };
 
+// ID0:PB13 ID1:PB14 ID2:PB15 ID3:PA8 (ID=BINARY+1)
 portpin ids[] = {
 	{ID0_GPIO_Port, ID0_Pin},{ID1_GPIO_Port, ID1_Pin},
 	{ID2_GPIO_Port, ID2_Pin},{ID3_GPIO_Port, ID3_Pin}
@@ -193,6 +194,7 @@ static uint32_t ticktime()
 }
 
 // 加速度テーブル作成
+// 2026-01-29 acctable[]は[1]始まりで[0]は±切り替え時のみ使用する様に変更。
 void maketable() {
 	int i;
 	float velocity;
@@ -200,7 +202,7 @@ void maketable() {
 	bool endf=false;
 
 	velocity=INITVEL;    // 初期速度[steps/S]
-	for ( i=0; i<MAXTBL; i++) {
+	for ( i=1; i<MAXTBL; i++) {
 		period=lperstep/velocity; // 周期[S]
 		acctable[i]=(uint16_t)(period*1e6)/2; // 半周期[uS]
 		if ( endf ) {
@@ -217,6 +219,7 @@ void maketable() {
 			endf = true;
 		}
 	}
+	acctable[0]=acctable[1]*2;    // [0]は±切替時のみ実行。
 }
 
 void onestep(int8_t i, ch* channel, bool ud, uint32_t steptime) {
@@ -250,21 +253,38 @@ void kinematics(int8_t i) {
 
   if ( 0 < way)  {
 	  // 上り
-	  onestep(i, &(ports[i]), 0<=velocipt[i]? UP:DOWN, acctable[tablept]);
-	  if ( ((way-MARGIN) < velocipt[i]) && (0 < velocipt[i]) )
-	  		  velocipt[i]--; // 上方向に減速
-	  else if ( velocipt[i] < way && (0 != acctable[tablept+1]) )
+	  // onestep(i, &(ports[i]), 0<=velocipt[i]? UP:DOWN, acctable[tablept]);
+	  if ( ((way-MARGIN) < velocipt[i]) && (1 < velocipt[i]) )
+		  velocipt[i]--; // 上方向に減速
+	  else if ( velocipt[i] < (way-MARGIN) && (0 != acctable[tablept+1]) )
 		  velocipt[i]++; // 上方向に加速(下方向に減速も含む)
-	  currentpt[i]++;
+
+	  tablept=abs(velocipt[i]);
+	  if (0<velocipt[i]) {
+		  onestep(i, &(ports[i]), UP, acctable[tablept]);
+		  currentpt[i]++;
+	  } else {
+		  onestep(i, &(ports[i]), DOWN, acctable[tablept]);
+		  currentpt[i]--;
+	  }
   } else if ( way < 0 ) {
 	  // 下り
-	  onestep(i, &(ports[i]), 0<=velocipt[i]? UP:DOWN, acctable[tablept]);
-	  if ( (velocipt[i] < (way+MARGIN))  && (-1 != velocipt[i]) )
-	  		  velocipt[i]++; // 下方向に減速
-	  else if ( way < velocipt[i] && (0 != acctable[tablept+1]) )
+	  // onestep(i, &(ports[i]), 0<=velocipt[i]? UP:DOWN, acctable[tablept]);
+	  if ( (velocipt[i] < (way+MARGIN))  && (velocipt[i]) < -1 )
+		  velocipt[i]++; // 下方向に減速
+	  else if ( (way+MARGIN) < velocipt[i] && (0 != acctable[tablept+1]) )
 		  velocipt[i]--; // 下方向に加速(上方向に減速も含む)
-	  currentpt[i]--;
+
+	  tablept=abs(velocipt[i]);
+	  if (0<velocipt[i]) {
+		  //onestep(i, &(ports[i]), UP, acctable[tablept]);
+	      currentpt[i]++;
+	  } else {
+	      //onestep(i, &(ports[i]), DOWN, acctable[tablept]);
+	      currentpt[i]--;
+	  }
   } else {
+	  velocipt[i]=0;
 #ifdef DEBUG
 	  printf("STOP %d\n",i);
 #endif
