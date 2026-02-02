@@ -42,6 +42,7 @@
 #define DOWN false
 #define HIGH 1
 #define LOW 0
+#define IDOFFSET 0x10
 
 // 制御するドライバ数
 #define CHCOUNT 4
@@ -449,9 +450,10 @@ static void MX_I2C1_Init(void)
 {
 
   /* USER CODE BEGIN I2C1_Init 0 */
+	//MX注意：MXで再生成したら下の「hi2c1.Init.OwnAddress1 = 2;」行をコメントアウトする事。
 	int id = (digitalRead(ids[3])<<3) + (digitalRead(ids[2])<<2)
 			+ (digitalRead(ids[1])<<1) + digitalRead(ids[0]);
-	hi2c1.Init.OwnAddress1 = (id+1)<<1;
+	hi2c1.Init.OwnAddress1 = (id+IDOFFSET)<<1;
 #ifdef DEBUG
 	printf("I2C ID=%d\n",id);
 #endif
