@@ -366,7 +366,7 @@ int main(void)
 	  // I2C受信データあり
 		if ( i2crcvf ) {
 			for (int i=0 ; i < 4 ; i++ ) {
-				int val = buf[i*2]*256+buf[i*2+1];
+				int val = buf[i*2+1]*256+buf[i*2+2];
 				if ( dest[i] != val) {
 					dest[i]=val;
 #ifdef DEBUG
