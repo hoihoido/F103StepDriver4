@@ -37,6 +37,10 @@
 /* USER CODE BEGIN PD */
 #define CHATTER 100
 
+// I2Cコマンド
+#define CMDMOVE 0x00
+#define CMDRST  0x01
+
 // 制御シンボル
 #define UP true
 #define DOWN false
@@ -362,17 +366,30 @@ int main(void)
 
 	  // I2C受信データあり
 		if ( i2crcvf ) {
-			for (int i=0 ; i < 4 ; i++ ) {
-				int val = buf[i*2+1]*256+buf[i*2+2];
-				if ( dest[i] != val) {
-					dest[i]=val;
-#ifdef DEBUG
-					printf( "%d:",val );
-#endif
-					kinematics(i);
+			if ( buf[0]==CMDMOVE ) { // モーター移動
+				for (int i=0 ; i < 4 ; i++ ) {
+					int val = buf[i*2+1]*256+buf[i*2+2];
+					if ( dest[i] != val) {
+						dest[i]=val;
+						#ifdef DEBUG
+							printf( "%d:",val );
+						#endif
+						kinematics(i);
+					}
+				}
+				#ifdef DEBUG
+					putchar('\n');
+				#endif
+			} else if ( buf[0] == CMDRST ) { // 原点復帰
+				for (int i=0 ; i < 4 ; i++ ) {
+					int val = buf[i*2+1]*256+buf[i*2+2];
+					if ( val ) {
+						currentpt[i]=2500;
+						dest[i]=0;
+						kinematics(i);
+					}
 				}
 			}
-			putchar('\n');
 			i2crcvf = false;
 			if ( HAL_I2C_Slave_Receive_IT(&hi2c1, (uint8_t *)buf, 128) != HAL_OK) {
 			  Error_Handler();
