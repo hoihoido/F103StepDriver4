@@ -127,7 +127,12 @@ portpin ids[] = {
 
 portpin marker={MARKER_GPIO_Port, MARKER_Pin};
 
-int8_t chstat[CHCOUNT] = {0, 0, 0, 0};
+//int8_t chstat[CHCOUNT] = {0, 0, 0, 0}; // 0:未動作 1:CLK=Hタイマ動作中 2:CLK=Lタイマ動作中
+enum timstat{
+	TNON, // タイマー未動作
+	TCLKH,// CLKHタイマー動作中
+	TCLKL // CLKLタイマー動作中
+} chstat[CHCOUNT] = {TNON, TNON, TNON, TNON};
 
 float lperstep;
 long  initvel;
@@ -237,7 +242,7 @@ void onestep(int8_t i, ch* channel, bool ud, uint32_t steptime) {
 	digitalWrite(channel->clk, HIGH);
 
 	// タイマースタート。
-	chstat[i]=1;
+	chstat[i]=TCLKH;
 	__HAL_TIM_SET_COUNTER(timarray[i], steptime);
 	HAL_TIM_Base_Start_IT(timarray[i]);
 }
@@ -786,18 +791,21 @@ static void MX_GPIO_Init(void)
 
 /* USER CODE BEGIN 4 */
 // ### タイマー割込み処理 ###
+// digitalWrite()
+// kinematics()
+// └onestep()
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 	// どのCH(どのタイマー)の割込みかループで探す。
 	for ( int i=0; i<CHCOUNT; i++) {
 		if ( htim->Instance == timarray[i]->Instance) {
 			HAL_TIM_Base_Stop_IT(timarray[i]);
-			if ( chstat[i]==1 ) { // H期間終了ならここ。CLKをLに下げて同じ時間でタイマー起動。
-				chstat[i]=2;
+			if ( chstat[i]==TCLKH ) { // H期間終了ならここ。CLKをLに下げて同じ時間でタイマー起動。
+				chstat[i]=TCLKL;
 				digitalWrite(ports[i].clk, LOW);
 				__HAL_TIM_SET_COUNTER(timarray[i], acctable[abs(velocipt[i])]);
 				HAL_TIM_Base_Start_IT(timarray[i]);
 			} else {			// L期間終了ならここ
-				chstat[i]=0;
+				chstat[i]=TNON;
 				kinematics(i);
 			}
 			break;
