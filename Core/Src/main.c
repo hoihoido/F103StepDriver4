@@ -67,6 +67,9 @@
 
 #define MAXTBL 1500
 
+// EN復帰待ち時間(x1uS)
+#define ENWTIME 1000 // 1mS
+
 // 絶対値マクロ
 #define abs(x) (x<0 ? x*-1 : x)
 
@@ -131,7 +134,8 @@ portpin marker={MARKER_GPIO_Port, MARKER_Pin};
 enum timstat{
 	TNON, // タイマー未動作
 	TCLKH,// CLKHタイマー動作中
-	TCLKL // CLKLタイマー動作中
+	TCLKL,// CLKLタイマー動作中
+	TENW // ENABLE WAIT タイマー動作中
 } chstat[CHCOUNT] = {TNON, TNON, TNON, TNON};
 
 float lperstep;
@@ -230,10 +234,35 @@ void maketable() {
 }
 
 void onestep(int8_t i, ch* channel, bool ud, uint32_t steptime) {
+	// EN復帰期間の保存用
+	static ch*  channelback[CHCOUNT];
+	static bool udback[CHCOUNT];
+	static uint32_t steptimeback[CHCOUNT];
+
 	// スタンバイモードからの復帰
-	if ( stbyf[i] ) {
-		digitalWrite(ports[i].enbl, HIGH);
-		stbyf[i]=false;
+	if ( chstat[i] != TENW ) { // 復帰タイマー明けではない
+		if ( stbyf[i] ) { // 今までスタンバイ中だった。
+			digitalWrite(ports[i].enbl, HIGH);
+			stbyf[i]=false;
+
+			// 状態を保存(復帰タイマー明けに続きをやるため）。
+			channelback[i]=channel;
+			udback[i]=ud;
+			steptimeback[i]=steptime;
+
+			// 復帰タイマー起動
+			chstat[i]=TENW;
+			__HAL_TIM_SET_COUNTER(timarray[i], ENWTIME);
+			HAL_TIM_Base_Start_IT(timarray[i]);
+
+			stbytime[i] = ticktime(&hrtc);
+			return; // 一旦抜ける（続きはタイマー明けで・・）
+
+		}
+	} else { // 復帰タイマー明け
+		channel=channelback[i];
+		ud=udback[i];
+		steptime=steptimeback[i];
 	}
 	stbytime[i] = ticktime(&hrtc);
 
@@ -804,9 +833,11 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 				digitalWrite(ports[i].clk, LOW);
 				__HAL_TIM_SET_COUNTER(timarray[i], acctable[abs(velocipt[i])]);
 				HAL_TIM_Base_Start_IT(timarray[i]);
-			} else {			// L期間終了ならここ
+			} else if (chstat[i]==TCLKL) {			// L期間終了ならここ
 				chstat[i]=TNON;
 				kinematics(i);
+			} else if (chstat[i]==TENW){	// ENABLE端子復帰待ち時間終了ならここ
+				onestep(i,NULL,false,0);	// 先に中断したonestep()の続きを実行。
 			}
 			break;
 		}
