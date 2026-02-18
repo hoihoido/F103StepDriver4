@@ -281,7 +281,7 @@ void kinematics(int8_t i) {
   int tablept;
   int16_t way;
 #ifdef DEBUG
-  printf("kinematics %d %ld %ld %ld\n",i,dest[i],currentpt[i],velocipt[i]);
+  printf("kinematics %d %ld %ld %d\n",i,dest[i],currentpt[i],velocipt[i]);
 #endif
 
   way = dest[i] - currentpt[i]; // 目的地までの道のり（±）
@@ -433,7 +433,10 @@ int main(void)
 
 	  // 一定時間動作が無ければイネーブル端子をLにする。
 	  for ( int i=0 ; i<CHCOUNT; i++ ) {
-		  if ( (stbyf[i] == false ) &&  (STBYTIME < (ticktime(&hrtc) - stbytime[i])) ) {
+//		  if ( (stbyf[i] == false ) &&  (STBYTIME < (ticktime(&hrtc) - stbytime[i])) ) {
+
+		  uint32_t stbytimebak = stbytime[i]; // stbytime[i]が割込みで変る可能性があるのでバックアップ
+		  if ( (stbyf[i] == false ) &&  (STBYTIME < (ticktime(&hrtc) - stbytimebak)) ) {
 			  digitalWrite(ports[i].enbl, LOW);
 			  stbyf[i] = true;
 		  }
